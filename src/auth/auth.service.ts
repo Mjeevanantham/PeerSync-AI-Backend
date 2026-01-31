@@ -1,207 +1,67 @@
 import { Injectable, Logger, UnauthorizedException, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { JwtService } from '@nestjs/jwt';
-import * as fs from 'fs';
-import * as path from 'path';
-import { JwtPayload, AuthenticatedUser, TokenValidationResult } from '../common/types';
+import { AuthenticatedUser, TokenValidationResult } from '../common/types';
 import { ErrorCodes, ErrorMessages } from '../common/constants';
+import { SupabaseService } from './supabase.service';
 
 /**
  * Authentication Service
  * 
- * Handles JWT token validation using RS256.
+ * Handles JWT token validation using Supabase Auth.
  * 
- * RAILWAY-SAFE: Supports two modes for RSA keys:
- * 1. Environment variables (JWT_PUBLIC_KEY, JWT_PRIVATE_KEY) - for Railway/cloud
- * 2. File paths (JWT_PUBLIC_KEY_PATH, JWT_PRIVATE_KEY_PATH) - for local dev
+ * SUPABASE INTEGRATION:
+ * - Verifies tokens using Supabase JWKS or JWT secret
+ * - Validates issuer (Supabase project URL)
+ * - Validates audience ('authenticated')
+ * - Supports OAuth (GitHub, Google) and email login
+ * - Auto-syncs users to Postgres on first login
  * 
- * Priority: Environment variables > File paths
- * FAIL FAST: Throws at startup if no keys are available
+ * NO CUSTOM RSA KEYS REQUIRED - uses Supabase's built-in auth
  */
 @Injectable()
 export class AuthService implements OnModuleInit {
   private readonly logger = new Logger(AuthService.name);
-  private readonly publicKey: string;
-  private readonly privateKey: string;
-  private readonly jwtIssuer: string;
-  private readonly jwtAudience: string;
-  private readonly jwtExpiration: string;
 
   constructor(
     private readonly configService: ConfigService,
-    private readonly jwtService: JwtService,
-  ) {
-    // ═══════════════════════════════════════════════════════════════════════════════
-    // RAILWAY-SAFE: Load JWT configuration with validation
-    // ═══════════════════════════════════════════════════════════════════════════════
-    
-    // Load and validate JWT config
-    this.jwtIssuer = this.configService.get<string>('JWT_ISSUER', 'peersync-dev-connect');
-    this.jwtAudience = this.configService.get<string>('JWT_AUDIENCE', 'peersync-clients');
-    this.jwtExpiration = this.configService.get<string>('JWT_EXPIRATION', '1h');
-
-    // Load RSA keys (env vars take priority over file paths)
-    const { publicKey, privateKey } = this.loadRsaKeys();
-    this.publicKey = publicKey;
-    this.privateKey = privateKey;
-    // ═══════════════════════════════════════════════════════════════════════════════
-  }
+    private readonly supabaseService: SupabaseService,
+  ) {}
 
   /**
    * Validate configuration on module initialization
    */
   onModuleInit(): void {
-    this.validateConfiguration();
-  }
-
-  /**
-   * Load RSA keys from environment variables or file paths
-   * 
-   * PRIORITY ORDER:
-   * 1. JWT_PUBLIC_KEY / JWT_PRIVATE_KEY (env vars) - for Railway/production
-   * 2. JWT_PUBLIC_KEY_PATH / JWT_PRIVATE_KEY_PATH (file paths) - for local dev
-   * 
-   * FAIL FAST: Throws if neither source is available
-   */
-  private loadRsaKeys(): { publicKey: string; privateKey: string } {
-    // ═══════════════════════════════════════════════════════════════════════════════
-    // STEP 1: Try environment variables first (Railway/production)
-    // ═══════════════════════════════════════════════════════════════════════════════
-    const envPublicKey = process.env.JWT_PUBLIC_KEY;
-    const envPrivateKey = process.env.JWT_PRIVATE_KEY;
-
-    if (envPublicKey && envPrivateKey) {
-      this.logger.log('Loading RSA keys from environment variables');
-      
-      const publicKey = this.parseKeyFromEnv(envPublicKey);
-      const privateKey = this.parseKeyFromEnv(envPrivateKey);
-      
-      // Validate key format
-      if (!this.isValidPemKey(publicKey, 'PUBLIC')) {
-        throw new Error('JWT_PUBLIC_KEY is not a valid PEM public key');
-      }
-      if (!this.isValidPemKey(privateKey, 'PRIVATE') && !this.isValidPemKey(privateKey, 'RSA PRIVATE')) {
-        throw new Error('JWT_PRIVATE_KEY is not a valid PEM private key');
-      }
-      
-      this.logger.log('RSA keys loaded from environment variables');
-      return { publicKey, privateKey };
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════════════
-    // STEP 2: Fall back to file paths (local development)
-    // ═══════════════════════════════════════════════════════════════════════════════
-    const publicKeyPath = this.configService.get<string>('JWT_PUBLIC_KEY_PATH', './keys/public.pem');
-    const privateKeyPath = this.configService.get<string>('JWT_PRIVATE_KEY_PATH', './keys/private.pem');
-
-    this.logger.log('Loading RSA keys from file paths');
-
-    try {
-      const resolvedPublicPath = path.resolve(process.cwd(), publicKeyPath);
-      const resolvedPrivatePath = path.resolve(process.cwd(), privateKeyPath);
-
-      // Check if files exist before reading
-      if (!fs.existsSync(resolvedPublicPath)) {
-        throw new Error(`Public key file not found: ${resolvedPublicPath}`);
-      }
-      if (!fs.existsSync(resolvedPrivatePath)) {
-        throw new Error(`Private key file not found: ${resolvedPrivatePath}`);
-      }
-
-      const publicKey = fs.readFileSync(resolvedPublicPath, 'utf8');
-      const privateKey = fs.readFileSync(resolvedPrivatePath, 'utf8');
-
-      this.logger.log('RSA keys loaded from files');
-      return { publicKey, privateKey };
-    } catch (error) {
-      // ═══════════════════════════════════════════════════════════════════════════════
-      // FAIL FAST: No keys available from any source
-      // ═══════════════════════════════════════════════════════════════════════════════
-      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('═══════════════════════════════════════════════════════════════');
-      this.logger.error('FATAL: Failed to load RSA keys');
-      this.logger.error('═══════════════════════════════════════════════════════════════');
-      this.logger.error(`Error: ${errorMsg}`);
-      this.logger.error('');
-      this.logger.error('SOLUTION (choose one):');
-      this.logger.error('');
-      this.logger.error('Option A - Local Development:');
-      this.logger.error('  Run: npm run generate:keys');
-      this.logger.error('  This creates ./keys/public.pem and ./keys/private.pem');
-      this.logger.error('');
-      this.logger.error('Option B - Production (Railway):');
-      this.logger.error('  Set environment variables:');
-      this.logger.error('    JWT_PUBLIC_KEY=-----BEGIN PUBLIC KEY-----\\n...\\n-----END PUBLIC KEY-----');
-      this.logger.error('    JWT_PRIVATE_KEY=-----BEGIN RSA PRIVATE KEY-----\\n...\\n-----END RSA PRIVATE KEY-----');
-      this.logger.error('═══════════════════════════════════════════════════════════════');
-      throw new Error('RSA keys not available. See logs for configuration options.');
-    }
-  }
-
-  /**
-   * Parse key from environment variable
-   * Handles escaped newlines (\n) commonly used in env vars
-   */
-  private parseKeyFromEnv(key: string): string {
-    // Handle escaped newlines (\\n → \n)
-    // This is the most common format for PEM keys in environment variables
-    return key.replace(/\\n/g, '\n');
-  }
-
-  /**
-   * Validate that a key is in PEM format
-   */
-  private isValidPemKey(key: string, type: 'PUBLIC' | 'PRIVATE' | 'RSA PRIVATE'): boolean {
-    const header = `-----BEGIN ${type} KEY-----`;
-    const footer = `-----END ${type} KEY-----`;
-    return key.includes(header) && key.includes(footer);
-  }
-
-  /**
-   * Validate JWT configuration at startup
-   */
-  private validateConfiguration(): void {
-    this.logger.log('Validating JWT configuration...');
-
-    // Validate issuer
-    if (!this.jwtIssuer || this.jwtIssuer.trim() === '') {
-      this.logger.warn('JWT_ISSUER is empty, using default: peersync-dev-connect');
-    }
-
-    // Validate audience
-    if (!this.jwtAudience || this.jwtAudience.trim() === '') {
-      this.logger.warn('JWT_AUDIENCE is empty, using default: peersync-clients');
-    }
-
-    // Validate expiration format
-    const validExpirationPattern = /^(\d+[smhd]|\d+)$/;
-    if (!validExpirationPattern.test(this.jwtExpiration)) {
-      this.logger.warn(`JWT_EXPIRATION "${this.jwtExpiration}" may be invalid. Expected format: 1h, 30m, 7d, etc.`);
-    }
-
-    this.logger.log('JWT configuration validated');
-    this.logger.log(`  Issuer: ${this.jwtIssuer}`);
-    this.logger.log(`  Audience: ${this.jwtAudience}`);
-    this.logger.log(`  Expiration: ${this.jwtExpiration}`);
+    this.logger.log('Auth service initialized with Supabase');
   }
 
   /**
    * Validate JWT token and extract user
+   * 
+   * Uses Supabase's JWKS endpoint for token verification.
    */
   async validateToken(token: string): Promise<TokenValidationResult> {
     try {
-      const payload = this.jwtService.verify<JwtPayload>(token, {
-        publicKey: this.publicKey,
-        algorithms: ['RS256'],
-        issuer: this.jwtIssuer,
-        audience: this.jwtAudience,
-      });
+      const result = await this.supabaseService.verifyToken(token);
+
+      if (!result.valid || !result.payload) {
+        // Map Supabase errors to our error codes
+        if (result.error === 'ERR_AUTH_EXPIRED') {
+          return { valid: false, error: ErrorMessages[ErrorCodes.AUTH_TOKEN_EXPIRED] };
+        }
+        return { valid: false, error: ErrorMessages[ErrorCodes.AUTH_TOKEN_INVALID] };
+      }
+
+      const payload = result.payload;
 
       const user: AuthenticatedUser = {
         userId: payload.sub,
-        email: payload.email,
-        displayName: payload.name,
-        roles: payload.roles || [],
+        email: payload.email || '',
+        displayName: payload.user_metadata?.full_name || 
+                     payload.user_metadata?.name || 
+                     payload.email?.split('@')[0] || 
+                     'User',
+        roles: payload.role ? [payload.role] : [],
+        provider: payload.app_metadata?.provider || 'email',
       };
 
       return { valid: true, user };
@@ -218,50 +78,72 @@ export class AuthService implements OnModuleInit {
 
   /**
    * Validate WebSocket token
+   * 
+   * Expects token in format: "Bearer <supabase_access_token>" or just the token
    */
   async validateWsToken(token: string): Promise<AuthenticatedUser> {
     if (!token) {
       throw new UnauthorizedException(ErrorMessages[ErrorCodes.AUTH_TOKEN_MISSING]);
     }
 
+    // Handle "Bearer " prefix
     const cleanToken = token.startsWith('Bearer ') ? token.slice(7) : token;
     const result = await this.validateToken(cleanToken);
 
     if (!result.valid || !result.user) {
-      throw new UnauthorizedException(
-        result.error || ErrorMessages[ErrorCodes.AUTH_TOKEN_INVALID]
-      );
+      // Throw with specific error code for better client handling
+      const errorMessage = result.error || ErrorMessages[ErrorCodes.AUTH_TOKEN_INVALID];
+      
+      // Map to WebSocket-friendly error codes
+      if (errorMessage.includes('expired')) {
+        throw new UnauthorizedException('ERR_AUTH_EXPIRED');
+      }
+      throw new UnauthorizedException('ERR_AUTH_INVALID');
     }
+
+    // Sync user to database on successful auth
+    // This is fire-and-forget - don't block auth on DB sync
+    this.syncUserAsync(result.user);
 
     return result.user;
   }
 
   /**
-   * Generate token (development only)
+   * Sync user to database asynchronously
    * 
-   * WARNING: In production, tokens should be issued by a dedicated auth service
+   * Non-blocking - auth succeeds even if sync fails
    */
-  generateToken(user: AuthenticatedUser): string {
-    const payload: Partial<JwtPayload> = {
-      sub: user.userId,
-      email: user.email,
-      name: user.displayName,
-      roles: user.roles,
-    };
-
-    return this.jwtService.sign(payload, {
-      privateKey: this.privateKey,
-      algorithm: 'RS256',
-      expiresIn: this.jwtExpiration,
-      issuer: this.jwtIssuer,
-      audience: this.jwtAudience,
-    });
+  private async syncUserAsync(user: AuthenticatedUser): Promise<void> {
+    try {
+      await this.supabaseService.syncUser(user);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.warn(`User sync failed (non-blocking): ${msg}`);
+    }
   }
 
   /**
-   * Get public key (for verification by clients)
+   * Get authenticated user from Supabase by token
+   * 
+   * Alternative method that calls Supabase Auth API directly.
+   * Useful for double-checking token validity.
    */
-  getPublicKey(): string {
-    return this.publicKey;
+  async getUserFromSupabase(token: string): Promise<AuthenticatedUser | null> {
+    const supabaseUser = await this.supabaseService.getUserFromToken(token);
+    
+    if (!supabaseUser) {
+      return null;
+    }
+
+    return {
+      userId: supabaseUser.id,
+      email: supabaseUser.email || '',
+      displayName: supabaseUser.user_metadata?.full_name || 
+                   supabaseUser.user_metadata?.name || 
+                   supabaseUser.email?.split('@')[0] || 
+                   'User',
+      roles: supabaseUser.role ? [supabaseUser.role] : [],
+      provider: supabaseUser.app_metadata?.provider || 'email',
+    };
   }
 }

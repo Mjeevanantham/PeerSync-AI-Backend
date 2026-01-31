@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, UseGuards, HttpCode, HttpStatus } from '@nestjs/common';
+import { Controller, Get, UseGuards } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './guards';
 import { CurrentUser } from './decorators';
@@ -7,48 +7,51 @@ import { AuthenticatedUser } from '../common/types';
 /**
  * Auth Controller
  * 
- * REST endpoints for token operations.
- * dev-token endpoint is for testing only.
+ * REST endpoints for token verification.
+ * 
+ * SUPABASE INTEGRATION:
+ * - Tokens are issued by Supabase Auth (client-side)
+ * - Backend only verifies tokens, does not issue them
+ * - Use Supabase client libraries for login/signup
  */
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   /**
-   * Get public key for external verification
-   */
-  @Get('public-key')
-  getPublicKey(): { publicKey: string } {
-    return { publicKey: this.authService.getPublicKey() };
-  }
-
-  /**
    * Verify token and return user info
+   * 
+   * Use this endpoint to:
+   * - Validate that a Supabase token is valid
+   * - Get the authenticated user's information
+   * - Test authentication before connecting WebSocket
    */
   @Get('verify')
   @UseGuards(JwtAuthGuard)
-  verifyToken(@CurrentUser() user: AuthenticatedUser): AuthenticatedUser {
-    return user;
+  verifyToken(@CurrentUser() user: AuthenticatedUser): {
+    userId: string;
+    email: string;
+    displayName: string;
+    provider?: string;
+    roles: string[];
+  } {
+    return {
+      userId: user.userId,
+      email: user.email,
+      displayName: user.displayName,
+      provider: user.provider,
+      roles: user.roles,
+    };
   }
 
   /**
-   * Generate development token (TESTING ONLY)
+   * Health check for auth service
    */
-  @Post('dev-token')
-  @HttpCode(HttpStatus.OK)
-  generateDevToken(
-    @Body() body: { userId: string; email: string; displayName: string },
-  ): { token: string; expiresIn: string } {
-    const user: AuthenticatedUser = {
-      userId: body.userId,
-      email: body.email,
-      displayName: body.displayName,
-      roles: ['developer'],
-    };
-
+  @Get('health')
+  health(): { status: string; provider: string } {
     return {
-      token: this.authService.generateToken(user),
-      expiresIn: '1h',
+      status: 'ok',
+      provider: 'supabase',
     };
   }
 }

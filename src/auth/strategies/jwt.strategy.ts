@@ -2,16 +2,18 @@ import { Injectable, UnauthorizedException, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
-import * as fs from 'fs';
-import * as path from 'path';
-import { JwtPayload, AuthenticatedUser } from '../../common/types';
+import * as jwksRsa from 'jwks-rsa';
+import { SupabaseJwtPayload, AuthenticatedUser } from '../../common/types';
 import { ErrorCodes, ErrorMessages } from '../../common/constants';
 
 /**
  * JWT Strategy for Passport (HTTP requests)
  * 
- * RAILWAY-SAFE: Supports keys from environment variables OR file paths
- * Priority: JWT_PUBLIC_KEY env var > JWT_PUBLIC_KEY_PATH file
+ * SUPABASE INTEGRATION:
+ * - Verifies tokens using Supabase JWT secret (HS256)
+ * - Validates issuer (Supabase project URL)
+ * - Validates audience ('authenticated')
+ * - Supports OAuth (GitHub, Google) and email login
  */
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
@@ -19,90 +21,56 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
 
   constructor(configService: ConfigService) {
     // ═══════════════════════════════════════════════════════════════════════════════
-    // RAILWAY-SAFE: Load public key from env var OR file path
+    // SUPABASE JWT CONFIGURATION
     // ═══════════════════════════════════════════════════════════════════════════════
-    const publicKey = JwtStrategy.loadPublicKey(configService);
+    const supabaseUrl = configService.get<string>('SUPABASE_URL', '');
+    const jwtSecret = configService.get<string>('SUPABASE_JWT_SECRET', '');
+
+    if (!supabaseUrl) {
+      throw new Error('SUPABASE_URL is required for JWT strategy');
+    }
+
+    if (!jwtSecret) {
+      throw new Error('SUPABASE_JWT_SECRET is required for JWT strategy');
+    }
+
+    JwtStrategy.logger.log('Initializing JWT strategy with Supabase');
+    JwtStrategy.logger.log(`  Issuer: ${supabaseUrl}/auth/v1`);
 
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey: publicKey,
-      algorithms: ['RS256'],
-      issuer: configService.get<string>('JWT_ISSUER', 'peersync-dev-connect'),
-      audience: configService.get<string>('JWT_AUDIENCE', 'peersync-clients'),
+      // Supabase uses HS256 with project JWT secret
+      secretOrKey: jwtSecret,
+      algorithms: ['HS256'],
+      issuer: `${supabaseUrl}/auth/v1`,
+      audience: 'authenticated',
     });
   }
 
   /**
-   * Load public key from environment variable or file path
+   * Validate JWT payload and return authenticated user
    * 
-   * PRIORITY:
-   * 1. JWT_PUBLIC_KEY (env var) - for Railway/production
-   * 2. JWT_PUBLIC_KEY_PATH (file path) - for local dev
+   * Called after token signature is verified.
    */
-  private static loadPublicKey(configService: ConfigService): string {
-    // Try environment variable first (Railway/production)
-    const envPublicKey = process.env.JWT_PUBLIC_KEY;
-
-    if (envPublicKey) {
-      JwtStrategy.logger.log('Loading JWT public key from environment variable');
-      // Handle escaped newlines (\\n → \n)
-      const parsedKey = envPublicKey.replace(/\\n/g, '\n');
-      
-      // Validate PEM format
-      if (!parsedKey.includes('-----BEGIN PUBLIC KEY-----')) {
-        throw new Error('JWT_PUBLIC_KEY is not a valid PEM public key');
-      }
-      
-      return parsedKey;
-    }
-
-    // Fall back to file path (local development)
-    const publicKeyPath = configService.get<string>(
-      'JWT_PUBLIC_KEY_PATH',
-      './keys/public.pem',
-    );
-
-    JwtStrategy.logger.log(`Loading JWT public key from file: ${publicKeyPath}`);
-
-    try {
-      const resolvedPath = path.resolve(process.cwd(), publicKeyPath);
-      
-      if (!fs.existsSync(resolvedPath)) {
-        throw new Error(`Public key file not found: ${resolvedPath}`);
-      }
-      
-      return fs.readFileSync(resolvedPath, 'utf8');
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-      JwtStrategy.logger.error('═══════════════════════════════════════════════════════════════');
-      JwtStrategy.logger.error('FATAL: Failed to load JWT public key');
-      JwtStrategy.logger.error('═══════════════════════════════════════════════════════════════');
-      JwtStrategy.logger.error(`Error: ${errorMsg}`);
-      JwtStrategy.logger.error('');
-      JwtStrategy.logger.error('SOLUTION (choose one):');
-      JwtStrategy.logger.error('');
-      JwtStrategy.logger.error('Option A - Local Development:');
-      JwtStrategy.logger.error('  Run: npm run generate:keys');
-      JwtStrategy.logger.error('');
-      JwtStrategy.logger.error('Option B - Production (Railway):');
-      JwtStrategy.logger.error('  Set environment variable:');
-      JwtStrategy.logger.error('    JWT_PUBLIC_KEY=-----BEGIN PUBLIC KEY-----\\n...\\n-----END PUBLIC KEY-----');
-      JwtStrategy.logger.error('═══════════════════════════════════════════════════════════════');
-      throw error;
-    }
-  }
-
-  async validate(payload: JwtPayload): Promise<AuthenticatedUser> {
-    if (!payload.sub || !payload.email) {
+  async validate(payload: SupabaseJwtPayload): Promise<AuthenticatedUser> {
+    // Ensure we have required claims
+    if (!payload.sub) {
+      JwtStrategy.logger.warn('Token missing sub claim');
       throw new UnauthorizedException(ErrorMessages[ErrorCodes.AUTH_TOKEN_INVALID]);
     }
 
+    // Extract user info from Supabase JWT
     return {
       userId: payload.sub,
-      email: payload.email,
-      displayName: payload.name,
-      roles: payload.roles || [],
+      email: payload.email || '',
+      displayName: payload.user_metadata?.full_name || 
+                   payload.user_metadata?.name || 
+                   payload.user_metadata?.preferred_username ||
+                   payload.email?.split('@')[0] || 
+                   'User',
+      roles: payload.role ? [payload.role] : [],
+      provider: payload.app_metadata?.provider || 'email',
     };
   }
 }
