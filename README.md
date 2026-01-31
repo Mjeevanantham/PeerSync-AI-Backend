@@ -9,6 +9,7 @@ This backend serves as the **single source of truth** for:
 - Peer presence and discovery
 - Session lifecycle management
 - Message routing between peers
+- LAN mode detection (same-network peers)
 
 ## Tech Stack
 
@@ -19,7 +20,7 @@ This backend serves as the **single source of truth** for:
 - JWT (RS256)
 - In-memory stores (Map-based)
 
-## Quick Start
+## Quick Start (Local Development)
 
 ```bash
 # Install dependencies
@@ -35,11 +36,87 @@ cp .env.example .env
 npm run start:dev
 ```
 
+## Railway Deployment
+
+### Step 1: Connect Repository
+
+1. Go to [Railway](https://railway.app)
+2. Click "New Project" → "Deploy from GitHub repo"
+3. Select `PeerSync-AI-Backend` repository
+4. Railway will auto-detect NestJS
+
+### Step 2: Configure Environment Variables
+
+In Railway dashboard → Settings → Variables, add:
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `NODE_ENV` | Yes | Set to `production` |
+| `PORT` | Auto | Railway sets this automatically |
+| `JWT_PUBLIC_KEY` | Yes | RSA public key (PEM format, see below) |
+| `JWT_PRIVATE_KEY` | Yes | RSA private key (PEM format, see below) |
+| `JWT_ISSUER` | No | Default: `peersync-dev-connect` |
+| `JWT_AUDIENCE` | No | Default: `peersync-clients` |
+| `JWT_EXPIRATION` | No | Default: `1h` |
+| `CORS_ORIGIN` | No | Comma-separated origins (empty = disabled in prod) |
+
+### Step 3: Generate and Set RSA Keys
+
+Generate keys locally:
+```bash
+npm run generate:keys
+```
+
+Then copy the contents of `keys/public.pem` and `keys/private.pem` to Railway:
+
+**Option A: Direct PEM (with escaped newlines)**
+```
+-----BEGIN PUBLIC KEY-----\nMIIBIjANBg...\n-----END PUBLIC KEY-----
+```
+
+**Option B: Base64 encoded**
+```bash
+# Encode public key
+cat keys/public.pem | base64 -w 0
+
+# Encode private key
+cat keys/private.pem | base64 -w 0
+```
+
+### Step 4: Deploy
+
+Railway will automatically:
+1. Run `npm install`
+2. Run `npm run build`
+3. Run `npm start` (which runs `node dist/main`)
+
+### Step 5: Verify Deployment
+
+Check logs for:
+```
+🚀 PeerSync backend running on port XXXX
+🔌 WebSocket endpoint: /ws
+🌍 Environment: production
+```
+
+Test health endpoint:
+```bash
+curl https://your-app.railway.app/api/v1/health
+# Response: {"status":"ok","timestamp":"..."}
+```
+
+### Production URLs
+
+After deployment, your URLs will be:
+- **HTTP**: `https://your-app.railway.app`
+- **WebSocket**: `wss://your-app.railway.app/ws`
+- **Health**: `https://your-app.railway.app/api/v1/health`
+
 ## WebSocket Protocol
 
 ### Connection Flow
 
-1. **Connect** to `ws://localhost:3000/ws`
+1. **Connect** to `wss://your-app.railway.app/ws` (production) or `ws://localhost:3000/ws` (dev)
 2. **Send AUTH** event with JWT token (within 10 seconds)
 3. **Receive AUTH_SUCCESS** or **AUTH_FAILED**
 4. **Send PEER_REGISTER** to join the peer network
@@ -73,10 +150,10 @@ npm run start:dev
 
 ```typescript
 // Client sends
-{ "event": "DISCOVER_PEERS", "data": { "role": "host", "ide": "vscode" } } // filters optional
+{ "event": "DISCOVER_PEERS", "data": { "role": "host", "ide": "vscode", "lanOnly": true } } // filters optional
 
 // Server responds
-{ "event": "PEERS_LIST", "data": { "peers": [{ "id": "user_456", "profile": {...}, "status": "online" }] } }
+{ "event": "PEERS_LIST", "data": { "peers": [{ "id": "user_456", "profile": {...}, "status": "online", "connectionMode": "LAN" }] } }
 ```
 
 #### Connection Request Flow
@@ -151,10 +228,17 @@ npm run start:dev
 - `busy`
 - `offline`
 
+### Connection Mode (LAN Detection)
+
+- `LAN` - Peer is on the same network
+- `REMOTE` - Peer is on a different network
+
 ## REST API
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
+| GET | `/api/v1/health` | Health check |
+| GET | `/api/v1/health/ready` | Readiness check |
 | GET | `/api/v1/auth/public-key` | Get JWT public key |
 | GET | `/api/v1/auth/verify` | Verify token (requires auth) |
 | POST | `/api/v1/auth/dev-token` | Generate dev token |
@@ -190,6 +274,7 @@ src/
 ├── common/         # Types, constants, utilities
 ├── config/         # Environment configuration
 ├── gateway/        # WebSocket gateway
+├── health/         # Health check endpoints
 ├── messaging/      # Socket registry
 ├── peer/           # Peer registry
 ├── session/        # Session management
@@ -203,13 +288,14 @@ src/
 - JWT validated using RS256 algorithm
 - Duplicate connections supersede old ones
 - Session participation validated on every message
+- IP addresses are hashed (never stored raw)
 
 ## Scripts
 
 | Script | Description |
 |--------|-------------|
+| `npm run start` | Production mode |
 | `npm run start:dev` | Development with hot reload |
-| `npm run start:prod` | Production mode |
 | `npm run build` | Build for production |
 | `npm run generate:keys` | Generate RSA key pair |
 

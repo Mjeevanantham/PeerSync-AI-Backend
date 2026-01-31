@@ -12,8 +12,25 @@ import { AppModule } from './app.module';
 async function bootstrap(): Promise<void> {
   const logger = new Logger('Bootstrap');
 
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // PRODUCTION HARDENING: Process-level error handlers
+  // Ensures unhandled errors are logged before process exits
+  // ═══════════════════════════════════════════════════════════════════════════════
+  process.on('unhandledRejection', (reason: unknown) => {
+    logger.error('Unhandled Promise Rejection:', reason);
+  });
+
+  process.on('uncaughtException', (error: Error) => {
+    logger.error('Uncaught Exception:', error.message);
+    logger.error(error.stack);
+    process.exit(1);
+  });
+  // ═══════════════════════════════════════════════════════════════════════════════
+
   const app = await NestFactory.create(AppModule, {
-    logger: ['error', 'warn', 'log', 'debug'],
+    logger: process.env.NODE_ENV === 'production' 
+      ? ['error', 'warn', 'log'] 
+      : ['error', 'warn', 'log', 'debug'],
   });
 
   const configService = app.get(ConfigService);
@@ -32,25 +49,45 @@ async function bootstrap(): Promise<void> {
   app.useWebSocketAdapter(new WsAdapter(app));
 
   // CORS for REST endpoints
+  const corsOrigin = configService.get<string>('CORS_ORIGIN');
   app.enableCors({
-    origin: configService.get<string>('NODE_ENV') === 'production' ? false : true,
+    origin: corsOrigin 
+      ? corsOrigin.split(',').map(o => o.trim()) 
+      : (configService.get<string>('NODE_ENV') === 'production' ? false : true),
     credentials: true,
   });
 
   // API prefix
   app.setGlobalPrefix('api/v1');
 
+  // ═══════════════════════════════════════════════════════════════════════════════
+  // PRODUCTION HARDENING: Graceful shutdown
+  // Allows in-flight requests to complete before shutting down
+  // ═══════════════════════════════════════════════════════════════════════════════
+  app.enableShutdownHooks();
+  // ═══════════════════════════════════════════════════════════════════════════════
+
   const port = configService.get<number>('PORT') || 3000;
 
-  await app.listen(port);
+  await app.listen(port, '0.0.0.0'); // Bind to all interfaces for Railway
 
-  logger.log(`PeerSync backend running on port ${port}`);
-  logger.log(`WebSocket: ws://localhost:${port}/ws`);
-  logger.log(`Environment: ${configService.get<string>('NODE_ENV') || 'development'}`);
+  const nodeEnv = configService.get<string>('NODE_ENV') || 'development';
+  logger.log(`🚀 PeerSync backend running on port ${port}`);
+  logger.log(`🔌 WebSocket endpoint: /ws`);
+  logger.log(`🌍 Environment: ${nodeEnv}`);
+  
+  if (nodeEnv !== 'production') {
+    logger.log(`📍 Local URL: http://localhost:${port}`);
+    logger.log(`📍 WebSocket: ws://localhost:${port}/ws`);
+  }
 }
 
 bootstrap().catch((error: Error) => {
   const logger = new Logger('Bootstrap');
-  logger.error('Failed to start', error.stack);
+  logger.error('Failed to start application');
+  logger.error(error.message);
+  if (error.stack) {
+    logger.error(error.stack);
+  }
   process.exit(1);
 });

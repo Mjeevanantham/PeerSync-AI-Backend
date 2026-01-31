@@ -10,8 +10,12 @@ import { ErrorCodes, ErrorMessages } from '../common/constants';
  * Authentication Service
  * 
  * Handles JWT token validation using RS256.
- * Backend validates tokens but does NOT issue them for production.
- * Token generation is for development only.
+ * 
+ * PRODUCTION: Supports two modes for RSA keys:
+ * 1. Environment variables (JWT_PUBLIC_KEY, JWT_PRIVATE_KEY) - for Railway/cloud
+ * 2. File paths (JWT_PUBLIC_KEY_PATH, JWT_PRIVATE_KEY_PATH) - for local dev
+ * 
+ * Environment variables take precedence over file paths.
  */
 @Injectable()
 export class AuthService {
@@ -23,29 +27,68 @@ export class AuthService {
     private readonly configService: ConfigService,
     private readonly jwtService: JwtService,
   ) {
-    const publicKeyPath = this.configService.get<string>(
-      'JWT_PUBLIC_KEY_PATH',
-      './keys/public.pem',
-    );
-    const privateKeyPath = this.configService.get<string>(
-      'JWT_PRIVATE_KEY_PATH',
-      './keys/private.pem',
-    );
+    // ═══════════════════════════════════════════════════════════════════════════════
+    // PRODUCTION HARDENING: Support keys from environment variables
+    // Railway and similar platforms don't support filesystem key storage
+    // ═══════════════════════════════════════════════════════════════════════════════
+    
+    // Try environment variables first (production mode)
+    const envPublicKey = this.configService.get<string>('JWT_PUBLIC_KEY');
+    const envPrivateKey = this.configService.get<string>('JWT_PRIVATE_KEY');
 
-    try {
-      this.publicKey = fs.readFileSync(
-        path.resolve(process.cwd(), publicKeyPath),
-        'utf8',
+    if (envPublicKey && envPrivateKey) {
+      // Use keys from environment variables
+      // Keys may be base64 encoded or have escaped newlines
+      this.publicKey = this.parseKey(envPublicKey);
+      this.privateKey = this.parseKey(envPrivateKey);
+      this.logger.log('RSA keys loaded from environment variables');
+    } else {
+      // Fall back to file paths (development mode)
+      const publicKeyPath = this.configService.get<string>(
+        'JWT_PUBLIC_KEY_PATH',
+        './keys/public.pem',
       );
-      this.privateKey = fs.readFileSync(
-        path.resolve(process.cwd(), privateKeyPath),
-        'utf8',
+      const privateKeyPath = this.configService.get<string>(
+        'JWT_PRIVATE_KEY_PATH',
+        './keys/private.pem',
       );
-      this.logger.log('RSA keys loaded successfully');
-    } catch (error) {
-      this.logger.error('Failed to load RSA keys. Run "npm run generate:keys"');
-      throw error;
+
+      try {
+        this.publicKey = fs.readFileSync(
+          path.resolve(process.cwd(), publicKeyPath),
+          'utf8',
+        );
+        this.privateKey = fs.readFileSync(
+          path.resolve(process.cwd(), privateKeyPath),
+          'utf8',
+        );
+        this.logger.log('RSA keys loaded from files');
+      } catch (error) {
+        this.logger.error('Failed to load RSA keys.');
+        this.logger.error('For local dev: Run "npm run generate:keys"');
+        this.logger.error('For production: Set JWT_PUBLIC_KEY and JWT_PRIVATE_KEY env vars');
+        throw error;
+      }
     }
+    // ═══════════════════════════════════════════════════════════════════════════════
+  }
+
+  /**
+   * Parse key from environment variable
+   * Handles base64 encoding and escaped newlines
+   */
+  private parseKey(key: string): string {
+    // If key looks like base64 (no PEM headers), decode it
+    if (!key.includes('-----BEGIN')) {
+      try {
+        return Buffer.from(key, 'base64').toString('utf8');
+      } catch {
+        // Not base64, try other methods
+      }
+    }
+    
+    // Handle escaped newlines (common in env vars)
+    return key.replace(/\\n/g, '\n');
   }
 
   /**
@@ -101,6 +144,8 @@ export class AuthService {
 
   /**
    * Generate token (development only)
+   * 
+   * WARNING: In production, tokens should be issued by a dedicated auth service
    */
   generateToken(user: AuthenticatedUser): string {
     const payload: Partial<JwtPayload> = {
@@ -120,7 +165,7 @@ export class AuthService {
   }
 
   /**
-   * Get public key
+   * Get public key (for verification by clients)
    */
   getPublicKey(): string {
     return this.publicKey;
