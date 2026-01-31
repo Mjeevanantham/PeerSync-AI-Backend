@@ -5,6 +5,7 @@ import { PeerModule } from './peer';
 import { SessionModule } from './session';
 import { MessagingModule } from './messaging';
 import { GatewayModule } from './gateway';
+import { HealthModule } from './health';
 import { configuration } from './config';
 
 /**
@@ -29,6 +30,7 @@ import { configuration } from './config';
     SessionModule,
     MessagingModule,
     GatewayModule,
+    HealthModule, // PRODUCTION HARDENING: Health check endpoints
   ],
 })
 export class AppModule {}
