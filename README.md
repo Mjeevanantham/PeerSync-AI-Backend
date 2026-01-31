@@ -101,22 +101,22 @@ Check logs for:
 
 Test health endpoint:
 ```bash
-curl https://your-app.railway.app/api/v1/health
-# Response: {"status":"ok","timestamp":"..."}
+curl https://api-peersync.up.railway.app/health
+# Response: {"status":"ok","env":"production"}
 ```
 
 ### Production URLs
 
 After deployment, your URLs will be:
-- **HTTP**: `https://your-app.railway.app`
-- **WebSocket**: `wss://your-app.railway.app/ws`
-- **Health**: `https://your-app.railway.app/api/v1/health`
+- **HTTP**: `https://api-peersync.up.railway.app`
+- **WebSocket**: `wss://api-peersync.up.railway.app/ws`
+- **Health**: `https://api-peersync.up.railway.app/health`
 
 ## WebSocket Protocol
 
 ### Connection Flow
 
-1. **Connect** to `wss://your-app.railway.app/ws` (production) or `ws://localhost:3000/ws` (dev)
+1. **Connect** to `wss://api-peersync.up.railway.app/ws` (production) or `ws://localhost:3000/ws` (dev)
 2. **Send AUTH** event with JWT token (within 10 seconds)
 3. **Receive AUTH_SUCCESS** or **AUTH_FAILED**
 4. **Send PEER_REGISTER** to join the peer network
