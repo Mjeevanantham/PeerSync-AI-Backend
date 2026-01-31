@@ -57,8 +57,10 @@ async function bootstrap(): Promise<void> {
     credentials: true,
   });
 
-  // API prefix
-  app.setGlobalPrefix('api/v1');
+  // API prefix (exclude health endpoints for Railway compatibility)
+  app.setGlobalPrefix('api/v1', {
+    exclude: ['health', 'health/ready'],
+  });
 
   // ═══════════════════════════════════════════════════════════════════════════════
   // PRODUCTION HARDENING: Graceful shutdown
