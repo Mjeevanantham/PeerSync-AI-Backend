@@ -26,14 +26,31 @@ This backend serves as the **single source of truth** for:
 # Install dependencies
 npm install
 
-# Generate RSA keys for JWT
-npm run generate:keys
-
 # Create environment file
 cp .env.example .env
+# Edit .env with your Supabase credentials
+
+# Run database migration (creates users table in Supabase)
+npm run db:migrate:remote  # See instructions for Supabase SQL Editor
+# Or: npx supabase link --project-ref YOUR_PROJECT_REF && npm run db:migrate
 
 # Start development server
 npm run start:dev
+```
+
+## Database Migration (Supabase)
+
+The `public.users` table syncs user data from Supabase Auth. Run the migration:
+
+**Option A: Supabase SQL Editor**
+1. Go to [Supabase Dashboard](https://supabase.com/dashboard/project/_/sql)
+2. Copy contents of `supabase/migrations/20260131120000_create_users_table.sql`
+3. Paste and run in SQL Editor
+
+**Option B: Supabase CLI**
+```bash
+npx supabase link --project-ref ckgbxjystbrhjehayttg
+npm run db:migrate
 ```
 
 ## Railway Deployment

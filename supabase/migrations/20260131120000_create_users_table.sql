@@ -4,8 +4,8 @@
 -- This table syncs user data from Supabase Auth to enable
 -- custom queries and relations with other tables.
 --
--- Run this migration in your Supabase SQL Editor:
--- https://supabase.com/dashboard/project/_/sql
+-- Run via: npx supabase db push (when linked)
+-- Or copy to Supabase SQL Editor: https://supabase.com/dashboard/project/_/sql
 -- ═══════════════════════════════════════════════════════════════════════════════
 
 -- Create users table in public schema
@@ -40,12 +40,14 @@ CREATE INDEX IF NOT EXISTS idx_users_provider ON public.users(provider);
 ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
 
 -- Policy: Users can read their own data
+DROP POLICY IF EXISTS "Users can read own data" ON public.users;
 CREATE POLICY "Users can read own data"
     ON public.users
     FOR SELECT
     USING (auth.uid() = id);
 
 -- Policy: Users can update their own data
+DROP POLICY IF EXISTS "Users can update own data" ON public.users;
 CREATE POLICY "Users can update own data"
     ON public.users
     FOR UPDATE
@@ -53,12 +55,14 @@ CREATE POLICY "Users can update own data"
     WITH CHECK (auth.uid() = id);
 
 -- Policy: Service role can do everything (for backend sync)
+DROP POLICY IF EXISTS "Service role has full access" ON public.users;
 CREATE POLICY "Service role has full access"
     ON public.users
     FOR ALL
     USING (auth.role() = 'service_role');
 
 -- Policy: Allow insert for authenticated users (for first login sync)
+DROP POLICY IF EXISTS "Allow insert for authenticated users" ON public.users;
 CREATE POLICY "Allow insert for authenticated users"
     ON public.users
     FOR INSERT
@@ -79,29 +83,3 @@ CREATE TRIGGER on_users_updated
     BEFORE UPDATE ON public.users
     FOR EACH ROW
     EXECUTE FUNCTION public.handle_updated_at();
-
--- ═══════════════════════════════════════════════════════════════════════════════
--- Optional: Auto-create user record on Supabase Auth signup
--- ═══════════════════════════════════════════════════════════════════════════════
--- Uncomment if you want users table to be auto-populated on signup
-
--- CREATE OR REPLACE FUNCTION public.handle_new_user()
--- RETURNS TRIGGER AS $$
--- BEGIN
---     INSERT INTO public.users (id, email, display_name, provider, avatar_url)
---     VALUES (
---         NEW.id,
---         NEW.email,
---         COALESCE(NEW.raw_user_meta_data->>'full_name', NEW.raw_user_meta_data->>'name', split_part(NEW.email, '@', 1)),
---         COALESCE(NEW.raw_app_meta_data->>'provider', 'email'),
---         NEW.raw_user_meta_data->>'avatar_url'
---     );
---     RETURN NEW;
--- END;
--- $$ LANGUAGE plpgsql SECURITY DEFINER;
-
--- DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
--- CREATE TRIGGER on_auth_user_created
---     AFTER INSERT ON auth.users
---     FOR EACH ROW
---     EXECUTE FUNCTION public.handle_new_user();

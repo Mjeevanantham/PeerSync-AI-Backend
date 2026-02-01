@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, NestModule, MiddlewareConsumer, RequestMethod } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { AuthModule } from './auth';
 import { PeerModule } from './peer';
@@ -7,6 +7,7 @@ import { MessagingModule } from './messaging';
 import { GatewayModule } from './gateway';
 import { HealthModule } from './health';
 import { configuration } from './config';
+import { LoggerMiddleware } from './middleware';
 
 /**
  * PeerSync Dev Connect - Root Module
@@ -33,4 +34,10 @@ import { configuration } from './config';
     HealthModule, // PRODUCTION HARDENING: Health check endpoints
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer): void {
+    consumer
+      .apply(LoggerMiddleware)
+      .forRoutes({ path: '*', method: RequestMethod.ALL });
+  }
+}

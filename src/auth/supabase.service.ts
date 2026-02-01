@@ -122,6 +122,9 @@ export class SupabaseService implements OnModuleInit {
    */
   async verifyToken(token: string): Promise<{ valid: boolean; payload?: SupabaseJwtPayload; error?: string }> {
     try {
+      // [DEBUG] Token verification
+      this.logger.debug(`[AUTH] Verifying token | tokenLength=${token?.length || 0}`);
+      
       // Decode header to get algorithm and kid
       const decoded = jwt.decode(token, { complete: true });
       if (!decoded || typeof decoded === 'string') {
@@ -159,6 +162,7 @@ export class SupabaseService implements OnModuleInit {
         audience: 'authenticated',
       }) as SupabaseJwtPayload;
 
+      this.logger.debug(`[AUTH] Token valid | sub=${payload?.sub} | provider=${payload?.app_metadata?.provider}`);
       return { valid: true, payload };
     } catch (error) {
       const msg = error instanceof Error ? error.message : 'Unknown error';
@@ -212,6 +216,7 @@ export class SupabaseService implements OnModuleInit {
    */
   async syncUser(user: AuthenticatedUser): Promise<UserRecord | null> {
     try {
+      this.logger.debug(`[AUTH] Syncing user | userId=${user.userId} | email=${user.email} | provider=${user.provider}`);
       const userRecord: Partial<UserRecord> = {
         id: user.userId,
         email: user.email,
@@ -233,14 +238,14 @@ export class SupabaseService implements OnModuleInit {
       if (error) {
         // Table might not exist yet - that's OK, auth still works
         if (error.message.includes('does not exist')) {
-          this.logger.warn('users table does not exist - skipping sync');
+          this.logger.warn(`[AUTH] users table does not exist - run migration: npm run db:migrate:remote | userId=${user.userId}`);
           return null;
         }
         this.logger.error(`User sync failed: ${error.message}`);
         return null;
       }
 
-      this.logger.debug(`User synced: ${user.userId}`);
+      this.logger.debug(`[AUTH] User synced | userId=${user.userId}`);
       return data as UserRecord;
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Unknown error';

@@ -18,7 +18,9 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
-    "generate:keys": "node scripts/generate-keys.js"
+    "generate:keys": "node scripts/generate-keys.js",
+    "db:migrate": "supabase db push",
+    "db:migrate:remote": "echo 'Run migrations in Supabase SQL Editor: https://supabase.com/dashboard/project/ckgbxjystbrhjehayttg/sql' && echo 'Or: npx supabase link --project-ref ckgbxjystbrhjehayttg && npm run db:migrate'"
   },
   "dependencies": {
     "@nestjs/common": "^10.4.0",

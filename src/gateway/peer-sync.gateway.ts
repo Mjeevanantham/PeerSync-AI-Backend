@@ -111,7 +111,8 @@ export class PeerSyncGateway
       ipHash, // LAN MODE ADDITION
     };
 
-    this.logger.debug(`Socket connected: ${socket.state.socketId} (awaiting auth)`);
+    // [DEBUG] WebSocket connection established
+    this.logger.log(`[WS] Connection opened | socketId=${socket.state.socketId} | ipHash=${ipHash?.slice(0, 8)}... | awaiting AUTH`);
 
     // Set up message handler
     socket.on('message', (data: RawData) => this.handleMessage(socket, data));
@@ -160,11 +161,16 @@ export class PeerSyncGateway
     try {
       message = JSON.parse(rawData.toString()) as IncomingWsMessage;
     } catch {
+      this.logger.warn(`[WS] Invalid JSON | socketId=${socket.state.socketId}`);
       this.emitError(socket, ErrorCodes.WS_INVALID_MESSAGE, 'Invalid JSON');
       return;
     }
 
     const { event, data } = message;
+    // [DEBUG] Route event (skip PING for log noise)
+    if (event !== WsEvents.PING) {
+      this.logger.debug(`[WS] Event | event=${event} | socketId=${socket.state.socketId} | authenticated=${socket.state.isAuthenticated}`);
+    }
 
     // AUTH event is allowed before authentication
     if (event === WsEvents.AUTH) {
@@ -216,7 +222,11 @@ export class PeerSyncGateway
   ): Promise<void> {
     const token = data?.token as string | undefined;
 
+    // [DEBUG] Auth attempt
+    this.logger.debug(`[WS] AUTH attempt | socketId=${socket.state.socketId} | tokenPresent=${!!token}`);
+
     if (!token) {
+      this.logger.warn(`[WS] AUTH failed | socketId=${socket.state.socketId} | reason=no token`);
       this.emit(socket, WsEvents.AUTH_FAILED, {
         code: ErrorCodes.AUTH_TOKEN_MISSING,
         message: ErrorMessages[ErrorCodes.AUTH_TOKEN_MISSING],
@@ -226,7 +236,9 @@ export class PeerSyncGateway
     }
 
     try {
+      this.logger.debug(`[WS] AUTH validating token | socketId=${socket.state.socketId}`);
       const user = await this.authService.validateWsToken(token);
+      this.logger.debug(`[WS] AUTH token valid | userId=${user.userId} | provider=${user.provider || 'unknown'}`);
 
       // Check for duplicate connection
       if (this.peerRegistry.isPeerRegistered(user.userId)) {
@@ -254,7 +266,7 @@ export class PeerSyncGateway
       // Register socket for messaging
       this.messagingService.registerSocket(socket.state.socketId, socket);
 
-      this.logger.log(`Auth success: userId=${user.userId}, socketId=${socket.state.socketId}`);
+      this.logger.log(`[WS] AUTH success | userId=${user.userId} | displayName=${user.displayName} | socketId=${socket.state.socketId}`);
 
       this.emit(socket, WsEvents.AUTH_SUCCESS, {
         userId: user.userId,
@@ -263,7 +275,7 @@ export class PeerSyncGateway
       });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Invalid token';
-      this.logger.warn(`Auth failed: ${errorMessage}`);
+      this.logger.warn(`[WS] AUTH failed | socketId=${socket.state.socketId} | error=${errorMessage}`);
 
       this.emit(socket, WsEvents.AUTH_FAILED, {
         code: ErrorCodes.AUTH_TOKEN_INVALID,
