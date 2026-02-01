@@ -16,6 +16,7 @@ export const ErrorCodes = {
   // Peer errors (2xxx)
   PEER_NOT_FOUND: 'ERR_2001',
   PEER_ALREADY_REGISTERED: 'ERR_2002',
+  PEER_NOT_IN_SAME_NETWORK: 'ERR_2007',
   PEER_REGISTRATION_FAILED: 'ERR_2003',
   PEER_INVALID_STATUS: 'ERR_2004',
   PEER_ALREADY_CONNECTED: 'ERR_2005',
@@ -77,6 +78,7 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCodes.PEER_INVALID_STATUS]: 'Invalid peer status',
   [ErrorCodes.PEER_ALREADY_CONNECTED]: 'User already has an active connection',
   [ErrorCodes.PEER_NOT_REGISTERED]: 'Peer must be registered first',
+  [ErrorCodes.PEER_NOT_IN_SAME_NETWORK]: 'Peer is not in your network',
 
   [ErrorCodes.SESSION_NOT_FOUND]: 'Session not found',
   [ErrorCodes.SESSION_ALREADY_EXISTS]: 'Session already exists',

@@ -10,6 +10,7 @@ import { WebSocket, Server, RawData } from 'ws';
 import { IncomingMessage } from 'http';
 import { AuthService } from '../auth';
 import { PeerRegistryService } from '../peer';
+import { NetworkService } from '../network';
 import { SessionService } from '../session';
 import { MessagingService } from '../messaging';
 import { AuthenticatedUser, WsEvents, IdeType, PeerRole, PeerStatus, ConnectionMode } from '../common/types';
@@ -26,6 +27,8 @@ interface SocketState {
   user: AuthenticatedUser | null;
   isAlive: boolean;
   connectedAt: Date;
+  /** Invite-code network ID; peer discovery scoped to same network */
+  networkId: string | null;
   // ═══════════════════════════════════════════════════════════════════════════
   // LAN MODE ADDITION – SAFE EXTENSION
   // ═══════════════════════════════════════════════════════════════════════════
@@ -75,6 +78,7 @@ export class PeerSyncGateway
   constructor(
     private readonly authService: AuthService,
     private readonly peerRegistry: PeerRegistryService,
+    private readonly networkService: NetworkService,
     private readonly sessionService: SessionService,
     private readonly messagingService: MessagingService,
   ) {}
@@ -108,6 +112,7 @@ export class PeerSyncGateway
       user: null,
       isAlive: true,
       connectedAt: new Date(),
+      networkId: null,
       ipHash, // LAN MODE ADDITION
     };
 
@@ -263,10 +268,19 @@ export class PeerSyncGateway
       socket.state.isAuthenticated = true;
       socket.state.user = user;
 
+      // Fetch user's active network and attach to socket (invite-code discovery)
+      try {
+        socket.state.networkId = await this.networkService.getActiveNetworkId(user.userId);
+        this.logger.debug(`[WS] AUTH networkId=${socket.state.networkId ?? 'none'} | userId=${user.userId}`);
+      } catch (err) {
+        this.logger.warn(`[WS] AUTH failed to fetch networkId | userId=${user.userId}`, err);
+        socket.state.networkId = null;
+      }
+
       // Register socket for messaging
       this.messagingService.registerSocket(socket.state.socketId, socket);
 
-      this.logger.log(`[WS] AUTH success | userId=${user.userId} | displayName=${user.displayName} | socketId=${socket.state.socketId}`);
+      this.logger.log(`[WS] AUTH success | userId=${user.userId} | displayName=${user.displayName} | networkId=${socket.state.networkId ?? 'none'} | socketId=${socket.state.socketId}`);
 
       this.emit(socket, WsEvents.AUTH_SUCCESS, {
         userId: user.userId,
@@ -300,21 +314,19 @@ export class PeerSyncGateway
     const displayName = (data?.displayName as string) || user.displayName;
     const ide = (data?.ide as IdeType) || IdeType.OTHER;
     const role = (data?.role as PeerRole) || PeerRole.GUEST;
+    const networkId = socket.state.networkId ?? undefined;
 
-    // ═══════════════════════════════════════════════════════════════════════════
-    // LAN MODE ADDITION – Pass IP hash for LAN detection
-    // ═══════════════════════════════════════════════════════════════════════════
     const peer = this.peerRegistry.registerPeer(
       user.userId,
       { displayName, ide, role },
       socket.state.socketId,
-      socket.state.ipHash, // LAN MODE ADDITION
+      socket.state.ipHash,
+      networkId,
     );
-    // ═══════════════════════════════════════════════════════════════════════════
 
     socket.state.isRegistered = true;
 
-    this.logger.log(`Peer registered: userId=${user.userId}, ide=${ide}`);
+    this.logger.log(`Peer registered: userId=${user.userId}, ide=${ide}, networkId=${networkId ?? 'none'}`);
 
     // Notify the registering peer
     this.emit(socket, WsEvents.PEER_REGISTERED, {
@@ -370,61 +382,40 @@ export class PeerSyncGateway
 
   /**
    * Handle DISCOVER_PEERS event
-   * 
-   * Supports optional filters:
-   * - role: Filter by peer role
-   * - ide: Filter by IDE type
-   * - lanOnly: Return only LAN peers (LAN MODE ADDITION)
+   *
+   * Invite-code discovery: return ONLY peers in the same network.
+   * Do NOT filter by IDE, Wi-Fi, IP, or role.
    */
   private handleDiscoverPeers(
     socket: PeerSocket,
-    data?: Record<string, unknown>,
+    _data?: Record<string, unknown>,
   ): void {
     if (!this.requireRegistered(socket)) return;
 
     const userId = socket.state.user!.userId;
-    const filterRole = data?.role as PeerRole | undefined;
-    const filterIde = data?.ide as IdeType | undefined;
-    
-    // ═══════════════════════════════════════════════════════════════════════════
-    // LAN MODE ADDITION – SAFE EXTENSION
-    // Support optional lanOnly filter to return only same-network peers
-    // ═══════════════════════════════════════════════════════════════════════════
-    const lanOnly = data?.lanOnly as boolean | undefined;
-    
-    // Use LAN-aware method to get peers with connectionMode set
-    let peers = lanOnly 
-      ? this.peerRegistry.getLanPeers(userId)
-      : this.peerRegistry.getOnlinePeersWithLanContext(userId);
-    // ═══════════════════════════════════════════════════════════════════════════
+    const networkId = socket.state.networkId;
 
-    // Exclude requester
-    peers = peers.filter(p => p.userId !== userId);
-
-    // Apply filters
-    if (filterRole) {
-      peers = peers.filter(p => p.role === filterRole);
-    }
-    if (filterIde) {
-      peers = peers.filter(p => p.ide === filterIde);
+    if (networkId == null) {
+      this.logger.debug(`[WS] DISCOVER_PEERS: no networkId for userId=${userId}, returning empty list`);
+      this.emit(socket, WsEvents.PEERS_LIST, { peers: [] });
+      return;
     }
 
-    // ═══════════════════════════════════════════════════════════════════════════
-    // LAN MODE ADDITION – Include connectionMode in response
-    // ═══════════════════════════════════════════════════════════════════════════
-    const peerList = peers.map(p => ({
-      id: p.userId,
-      profile: {
-        displayName: p.displayName,
-        role: p.role,
-        ide: p.ide,
-      },
-      status: p.status,
-      // LAN MODE ADDITION – Include connection mode (LAN/REMOTE)
-      connectionMode: p.networkContext?.connectionMode || ConnectionMode.REMOTE,
-    }));
-    // ═══════════════════════════════════════════════════════════════════════════
+    const peers = this.peerRegistry.getOnlinePeersInNetwork(networkId);
+    const peerList = peers
+      .filter(p => p.userId !== userId)
+      .map(p => ({
+        id: p.userId,
+        profile: {
+          displayName: p.displayName,
+          role: p.role,
+          ide: p.ide,
+        },
+        status: p.status,
+        connectionMode: p.networkContext?.connectionMode || ConnectionMode.REMOTE,
+      }));
 
+    this.logger.debug(`[WS] DISCOVER_PEERS: networkId=${networkId} userId=${userId} count=${peerList.length}`);
     this.emit(socket, WsEvents.PEERS_LIST, { peers: peerList });
   }
 
@@ -434,6 +425,7 @@ export class PeerSyncGateway
 
   /**
    * Handle CONNECTION_REQUEST event
+   * Allow only if sender and receiver are in the same network.
    */
   private handleConnectionRequest(
     socket: PeerSocket,
@@ -442,6 +434,7 @@ export class PeerSyncGateway
     if (!this.requireRegistered(socket)) return;
 
     const fromUserId = socket.state.user!.userId;
+    const fromNetworkId = socket.state.networkId;
     const toUserId = data?.targetId as string;
 
     if (!toUserId) {
@@ -453,6 +446,14 @@ export class PeerSyncGateway
     const targetPeer = this.peerRegistry.getPeerByUserId(toUserId);
     if (!targetPeer.found || !targetPeer.peer) {
       this.emitError(socket, ErrorCodes.PEER_NOT_FOUND, 'Target peer not found');
+      return;
+    }
+
+    // Same-network validation: allow CONNECTION_REQUEST only if in same network
+    const targetNetworkId = targetPeer.peer.networkId ?? null;
+    if (fromNetworkId !== targetNetworkId) {
+      this.logger.warn(`[WS] CONNECTION_REQUEST rejected: not in same network | from=${fromUserId} to=${toUserId}`);
+      this.emitError(socket, ErrorCodes.PEER_NOT_IN_SAME_NETWORK, 'Peer is not in your network');
       return;
     }
 

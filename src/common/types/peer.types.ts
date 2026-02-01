@@ -84,6 +84,8 @@ export interface RegisteredPeer {
   // ═══════════════════════════════════════════════════════════════════════════
   /** Network context for LAN detection (optional for backward compatibility) */
   networkContext?: NetworkContext;
+  /** Invite-code network ID; peers discover only within same network */
+  networkId?: string | null;
   // ═══════════════════════════════════════════════════════════════════════════
 }
 

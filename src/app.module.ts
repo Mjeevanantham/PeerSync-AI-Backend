@@ -2,6 +2,7 @@ import { Module, NestModule, MiddlewareConsumer, RequestMethod } from '@nestjs/c
 import { ConfigModule } from '@nestjs/config';
 import { AuthModule } from './auth';
 import { PeerModule } from './peer';
+import { NetworkModule } from './network';
 import { SessionModule } from './session';
 import { MessagingModule } from './messaging';
 import { GatewayModule } from './gateway';
@@ -28,6 +29,7 @@ import { LoggerMiddleware } from './middleware';
     }),
     AuthModule,
     PeerModule,
+    NetworkModule,
     SessionModule,
     MessagingModule,
     GatewayModule,

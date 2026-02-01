@@ -31,17 +31,19 @@ export class PeerRegistryService {
 
   /**
    * Register a new peer or update existing
-   * 
+   *
    * @param userId - User identifier
    * @param payload - Registration payload
    * @param socketId - Socket identifier
-   * @param ipHash - Optional hashed IP for LAN detection (LAN MODE ADDITION)
+   * @param ipHash - Optional hashed IP for LAN detection
+   * @param networkId - Optional invite-code network ID (peer discovery scoped to same network)
    */
   registerPeer(
     userId: string,
     payload: PeerRegistrationPayload,
     socketId: string,
-    ipHash?: string, // LAN MODE ADDITION – optional for backward compatibility
+    ipHash?: string,
+    networkId?: string,
   ): RegisteredPeer {
     const now = new Date();
 
@@ -78,7 +80,8 @@ export class PeerRegistryService {
       connectedAt: now,
       lastActivityAt: now,
       metadata: payload.metadata,
-      networkContext, // LAN MODE ADDITION
+      networkContext,
+      networkId: networkId ?? null,
     };
 
     this.peersByUserId.set(userId, peer);
@@ -260,8 +263,20 @@ export class PeerRegistryService {
   }
 
   /**
+   * Get online peers in the same invite-code network (for DISCOVER_PEERS).
+   *
+   * @param networkId - Invite-code network ID
+   * @returns Peers in the same network
+   */
+  getOnlinePeersInNetwork(networkId: string): RegisteredPeer[] {
+    return this.getOnlinePeers().filter(
+      p => (p.networkId ?? null) === networkId,
+    );
+  }
+
+  /**
    * Get only LAN peers (peers on the same network as requester)
-   * 
+   *
    * @param requestingUserId - The user requesting LAN peers
    * @returns Only peers that share the same IP hash
    */
