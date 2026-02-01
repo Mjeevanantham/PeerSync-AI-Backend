@@ -1,5 +1,5 @@
 import { Controller, Get, Post, Body, UseGuards } from '@nestjs/common';
-import { JwtAuthGuard } from '../auth/guards';
+import { SupabaseJwtAuthGuard } from '../auth/guards';
 import { CurrentUser } from '../auth/decorators';
 import { AuthenticatedUser } from '../common/types';
 import { NetworkService, NetworkInfo } from './network.service';
@@ -8,10 +8,10 @@ import { NetworkService, NetworkInfo } from './network.service';
  * Network Controller
  *
  * REST API for invite-code based networks.
- * All endpoints require Supabase JWT (Bearer token).
+ * Uses SupabaseJwtAuthGuard so token verification matches WebSocket AUTH.
  */
 @Controller('network')
-@UseGuards(JwtAuthGuard)
+@UseGuards(SupabaseJwtAuthGuard)
 export class NetworkController {
   constructor(private readonly networkService: NetworkService) {}
 
