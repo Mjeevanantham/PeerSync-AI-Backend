@@ -52,16 +52,23 @@ export class AuthService implements OnModuleInit {
       }
 
       const payload = result.payload;
+      const rawProvider = payload.app_metadata?.provider || 'email';
+      const provider = ['github', 'google', 'linkedin'].includes(rawProvider)
+        ? rawProvider
+        : ['magiclink', 'phone'].includes(rawProvider)
+          ? 'otp'
+          : 'email';
 
       const user: AuthenticatedUser = {
         userId: payload.sub,
         email: payload.email || '',
-        displayName: payload.user_metadata?.full_name || 
-                     payload.user_metadata?.name || 
-                     payload.email?.split('@')[0] || 
+        displayName: payload.user_metadata?.full_name ||
+                     payload.user_metadata?.name ||
+                     payload.email?.split('@')[0] ||
                      'User',
         roles: payload.role ? [payload.role] : [],
-        provider: payload.app_metadata?.provider || 'email',
+        provider,
+        avatarUrl: (payload.user_metadata?.avatar_url ?? payload.user_metadata?.picture) as string | undefined,
       };
 
       return { valid: true, user };

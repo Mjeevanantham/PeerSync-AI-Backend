@@ -73,8 +73,10 @@ export interface AuthenticatedUser {
   email: string;
   displayName: string;
   roles: string[];
-  /** Auth provider (github, google, email, etc.) */
+  /** Auth provider (github, google, linkedin, email, otp) */
   provider?: string;
+  /** Avatar URL from OAuth profile */
+  avatarUrl?: string;
 }
 
 /**
@@ -93,8 +95,9 @@ export interface UserRecord {
   id: string;
   email: string;
   display_name: string;
-  provider: string;
+  provider: string; // github | google | linkedin | email | otp
   avatar_url?: string;
   created_at: string;
   updated_at: string;
+  last_login_at?: string;
 }

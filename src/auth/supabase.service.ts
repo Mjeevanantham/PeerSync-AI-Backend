@@ -191,16 +191,20 @@ export class SupabaseService implements OnModuleInit {
 
     const payload = result.payload;
 
-    // Extract user info from Supabase JWT
+    // Normalize provider: github | google | linkedin | email | otp
+    const rawProvider = payload.app_metadata?.provider || 'email';
+    const provider = this.normalizeProvider(rawProvider);
+
     return {
       userId: payload.sub,
       email: payload.email || '',
-      displayName: payload.user_metadata?.full_name || 
-                   payload.user_metadata?.name || 
-                   payload.email?.split('@')[0] || 
+      displayName: payload.user_metadata?.full_name ||
+                   payload.user_metadata?.name ||
+                   payload.email?.split('@')[0] ||
                    'User',
       roles: payload.role ? [payload.role] : [],
-      provider: payload.app_metadata?.provider || 'email',
+      provider,
+      avatarUrl: (payload.user_metadata?.avatar_url ?? payload.user_metadata?.picture) as string | undefined,
     };
   }
 
@@ -209,20 +213,31 @@ export class SupabaseService implements OnModuleInit {
   // ═══════════════════════════════════════════════════════════════════════════════
 
   /**
+   * Normalize provider from JWT claims (github | google | linkedin | email | otp)
+   */
+  private normalizeProvider(raw: string): string {
+    const p = raw.toLowerCase();
+    if (p === 'github' || p === 'google' || p === 'linkedin') return p;
+    if (p === 'magiclink' || p === 'phone') return 'otp';
+    return 'email';
+  }
+
+  /**
    * Sync user to Supabase Postgres on first login
-   * 
-   * Creates or updates user record in public.users table.
-   * Uses upsert to handle both new and returning users.
+   * On subsequent logins: UPDATE last_login_at
    */
   async syncUser(user: AuthenticatedUser): Promise<UserRecord | null> {
     try {
       this.logger.debug(`[AUTH] Syncing user | userId=${user.userId} | email=${user.email} | provider=${user.provider}`);
+      const now = new Date().toISOString();
       const userRecord: Partial<UserRecord> = {
         id: user.userId,
         email: user.email,
         display_name: user.displayName,
         provider: user.provider || 'email',
-        updated_at: new Date().toISOString(),
+        avatar_url: user.avatarUrl,
+        updated_at: now,
+        last_login_at: now,
       };
 
       // Upsert user record

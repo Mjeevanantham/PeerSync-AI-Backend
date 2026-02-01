@@ -53,6 +53,32 @@ npx supabase link --project-ref ckgbxjystbrhjehayttg
 npm run db:migrate
 ```
 
+Run the second migration for `last_login_at`:
+```bash
+# In Supabase SQL Editor, run supabase/migrations/20260201120000_add_last_login_at.sql
+```
+
+## Supabase Auth Configuration (Multi-Provider)
+
+Enable these providers in Supabase Dashboard → **Authentication** → **Providers**:
+- **GitHub** OAuth (already enabled)
+- **Google** OAuth
+- **LinkedIn** OAuth
+- **Email** (password)
+- **Email OTP** (magic link / one-time code)
+
+Add Redirect URLs in **Authentication** → **URL Configuration**:
+```
+vscode://peersync.peersync-dev-connect/auth/callback
+cursor://peersync.peersync-dev-connect/auth/callback
+windsurf://peersync.peersync-dev-connect/auth/callback
+antigravity://peersync.peersync-dev-connect/auth/callback
+code://peersync.peersync-dev-connect/auth/callback
+http://localhost:54321
+```
+
+Backend accepts any Supabase-issued JWT. No backend changes needed when adding providers.
+
 ## Railway Deployment
 
 ### Step 1: Connect Repository
@@ -256,17 +282,10 @@ After deployment, your URLs will be:
 |--------|----------|-------------|
 | GET | `/api/v1/health` | Health check |
 | GET | `/api/v1/health/ready` | Readiness check |
-| GET | `/api/v1/auth/public-key` | Get JWT public key |
-| GET | `/api/v1/auth/verify` | Verify token (requires auth) |
-| POST | `/api/v1/auth/dev-token` | Generate dev token |
+| GET | `/api/v1/auth/verify` | Verify Supabase token (requires Bearer JWT) |
+| GET | `/api/v1/auth/health` | Auth service health |
 
-### Generate Dev Token
-
-```bash
-curl -X POST http://localhost:3000/api/v1/auth/dev-token \
-  -H "Content-Type: application/json" \
-  -d '{"userId": "user_123", "email": "dev@example.com", "displayName": "Developer"}'
-```
+**Note:** Tokens are issued by Supabase Auth only. Backend verifies; it does not issue tokens.
 
 ## Error Codes
 
@@ -302,10 +321,11 @@ src/
 ## Security
 
 - All sockets must authenticate within 10 seconds
-- JWT validated using RS256 algorithm
+- JWT validated via Supabase (JWKS / HS256)
 - Duplicate connections supersede old ones
 - Session participation validated on every message
 - IP addresses are hashed (never stored raw)
+- No auth reconnection on token failure (4001/4002)
 
 ## Scripts
 
@@ -314,7 +334,7 @@ src/
 | `npm run start` | Production mode |
 | `npm run start:dev` | Development with hot reload |
 | `npm run build` | Build for production |
-| `npm run generate:keys` | Generate RSA key pair |
+| `npm run db:migrate` | Push migrations (Supabase CLI linked) |
 
 ## License
 

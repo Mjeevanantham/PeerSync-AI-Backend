@@ -11,6 +11,7 @@ export const ErrorCodes = {
   AUTH_REQUIRED: 'ERR_1005',
   AUTH_SUPABASE_ERROR: 'ERR_1006',
   AUTH_USER_SYNC_FAILED: 'ERR_1007',
+  AUTH_PROVIDER_DISABLED: 'ERR_1008',
 
   // Peer errors (2xxx)
   PEER_NOT_FOUND: 'ERR_2001',
@@ -68,6 +69,7 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCodes.AUTH_REQUIRED]: 'Authentication required before this action',
   [ErrorCodes.AUTH_SUPABASE_ERROR]: 'Supabase authentication error',
   [ErrorCodes.AUTH_USER_SYNC_FAILED]: 'Failed to sync user data',
+  [ErrorCodes.AUTH_PROVIDER_DISABLED]: 'Authentication provider is disabled',
 
   [ErrorCodes.PEER_NOT_FOUND]: 'Peer not found',
   [ErrorCodes.PEER_ALREADY_REGISTERED]: 'Peer is already registered',
